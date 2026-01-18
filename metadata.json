@@ -1,0 +1,8 @@
+{
+  "name": "SolarInfra.in - Modern Solar Solutions",
+  "description": "A high-fidelity solar online store for rooftop installations in India, featuring interactive calculators, product catalogs, and a streamlined checkout process.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
