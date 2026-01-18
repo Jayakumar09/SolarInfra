@@ -9,6 +9,7 @@ export interface Product {
   image: string;
   description: string;
   features: string[];
+  quantity: number;
   stockStatus: 'in_stock' | 'out_of_stock';
   updatedAt?: number;
 }
@@ -20,6 +21,8 @@ export interface UserProfile {
   role: 'admin' | 'user';
   phone?: string;
   address?: string;
+  latestBillURL?: string;
+  billUpdatedAt?: number;
   createdAt: number;
 }
 

@@ -1,14 +1,11 @@
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-app.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-auth.js';
-import { getFirestore } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
+import { getFirestore, enableMultiTabIndexedDbPersistence } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
 import { getStorage } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-storage.js';
 
 /**
  * Firebase Configuration
- * Note: Values are hardcoded from the project requirements to ensure 
- * connectivity and resolve 'auth/invalid-api-key' issues often caused 
- * by environment variable access patterns in standard ESM environments.
  */
 const firebaseConfig = {
   apiKey: "AIzaSyDF5EQdcG44-wLVnDmJKa8hG9xtS_IwQGY",
@@ -27,5 +24,16 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+// Enable offline persistence to handle "client is offline" errors gracefully
+enableMultiTabIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+        // Multiple tabs open, persistence can only be enabled in one tab at a time.
+        console.warn('Firestore Persistence failed: Multiple tabs open.');
+    } else if (err.code === 'unimplemented') {
+        // The current browser does not support all of the features required to enable persistence
+        console.warn('Firestore Persistence failed: Browser not supported.');
+    }
+});
 
 export default app;

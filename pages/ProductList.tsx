@@ -1,13 +1,19 @@
 
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, getDocs } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
+import { collection, getDocs, query, orderBy, writeBatch, doc } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
 import { db } from '../firebase';
-import { Product } from '../types';
+import { Product, UserProfile } from '../types';
+import { SOLAR_PRODUCTS } from '../constants';
 
-const ProductList: React.FC = () => {
+interface ProductListProps {
+  user?: UserProfile | null;
+}
+
+const ProductList: React.FC<ProductListProps> = ({ user }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSeeding, setIsSeeding] = useState(false);
   
   // Filter States
   const [capacityFilter, setCapacityFilter] = useState('all');
@@ -15,31 +21,55 @@ const ProductList: React.FC = () => {
   const [maxEmi, setMaxEmi] = useState(20000);
   const [isFilterOpen, setIsFilterOpen] = useState(false);
 
+  const fetchProducts = async () => {
+    setLoading(true);
+    try {
+      const q = query(collection(db, 'products'), orderBy('capacity', 'asc'));
+      const querySnapshot = await getDocs(q);
+      const docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setProducts(docs);
+    } catch (e) {
+      console.error("Firestore Fetch Error:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        const querySnapshot = await getDocs(collection(db, 'products'));
-        const docs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
-        setProducts(docs);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchProducts();
   }, []);
 
+  const handleQuickSeed = async () => {
+    setIsSeeding(true);
+    try {
+      const batch = writeBatch(db);
+      SOLAR_PRODUCTS.forEach((product) => {
+        const newDocRef = doc(collection(db, 'products'));
+        batch.set(newDocRef, { ...product, updatedAt: Date.now() });
+      });
+      await batch.commit();
+      alert("Store catalog initialized!");
+      fetchProducts();
+    } catch (e) {
+      alert("Seeding failed: " + (e as Error).message);
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
   const filteredProducts = products.filter(p => {
     const matchesCapacity = capacityFilter === 'all' || p.capacity.includes(capacityFilter);
-    const matchesPrice = p.price <= maxPrice;
-    const matchesEmi = p.emi <= maxEmi;
+    const matchesPrice = (p.price || 0) <= maxPrice;
+    const matchesEmi = (p.emi || 0) <= maxEmi;
     return matchesCapacity && matchesPrice && matchesEmi;
   });
 
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-600"></div>
+      <div className="flex flex-col items-center gap-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-600"></div>
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Loading Catalog...</p>
+      </div>
     </div>
   );
 
@@ -47,7 +77,7 @@ const ProductList: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="flex flex-col md:flex-row gap-8">
         
-        {/* Sidebar Filters (Desktop) / Dropdown (Mobile) */}
+        {/* Sidebar Filters */}
         <aside className={`md:w-64 space-y-8 ${isFilterOpen ? 'block' : 'hidden md:block'}`}>
           <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm sticky top-24">
             <div className="flex justify-between items-center mb-6">
@@ -60,58 +90,31 @@ const ProductList: React.FC = () => {
                 }}
                 className="text-xs font-bold text-emerald-600 hover:text-emerald-700"
               >
-                Reset All
+                Reset
               </button>
             </div>
 
-            {/* Capacity Filter */}
             <div className="mb-8">
-              <label className="block text-sm font-bold text-slate-700 mb-3 uppercase tracking-wider">Capacity</label>
+              <label className="block text-xs font-bold text-slate-400 mb-3 uppercase tracking-widest">Capacity</label>
               <div className="space-y-2">
                 {['all', '1kW', '3kW', '5kW', '10kW'].map(f => (
                   <button 
                     key={f}
                     onClick={() => setCapacityFilter(f)}
-                    className={`w-full text-left px-4 py-2 rounded-xl text-sm font-medium transition ${capacityFilter === f ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'text-slate-600 hover:bg-slate-50 border border-transparent'}`}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-bold transition ${capacityFilter === f ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-100' : 'text-slate-500 hover:bg-slate-50'}`}
                   >
-                    {f === 'all' ? 'All Capacities' : f}
+                    {f === 'all' ? 'All Systems' : f}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Price Filter */}
             <div className="mb-8">
               <div className="flex justify-between items-center mb-3">
-                <label className="block text-sm font-bold text-slate-700 uppercase tracking-wider">Max Price</label>
-                <span className="text-xs font-bold text-slate-500">₹{maxPrice.toLocaleString()}</span>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-widest">Max Price</label>
+                <span className="text-xs font-bold text-slate-900">₹{maxPrice.toLocaleString()}</span>
               </div>
-              <input 
-                type="range" 
-                min="50000" 
-                max="600000" 
-                step="5000"
-                value={maxPrice}
-                onChange={(e) => setMaxPrice(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-              />
-            </div>
-
-            {/* EMI Filter */}
-            <div className="mb-4">
-              <div className="flex justify-between items-center mb-3">
-                <label className="block text-sm font-bold text-slate-700 uppercase tracking-wider">Max EMI</label>
-                <span className="text-xs font-bold text-slate-500">₹{maxEmi.toLocaleString()}</span>
-              </div>
-              <input 
-                type="range" 
-                min="2000" 
-                max="20000" 
-                step="500"
-                value={maxEmi}
-                onChange={(e) => setMaxEmi(parseInt(e.target.value))}
-                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-              />
+              <input type="range" min="50000" max="600000" step="10000" value={maxPrice} onChange={(e) => setMaxPrice(parseInt(e.target.value))} className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-emerald-600" />
             </div>
           </div>
         </aside>
@@ -121,83 +124,76 @@ const ProductList: React.FC = () => {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-3xl font-bold text-slate-900">Solar Rooftop Kits</h1>
-              <p className="text-slate-500 text-sm mt-1">{filteredProducts.length} systems found</p>
+              <p className="text-slate-500 text-sm mt-1">{filteredProducts.length} systems available</p>
             </div>
-            
-            <button 
-              onClick={() => setIsFilterOpen(!isFilterOpen)}
-              className="md:hidden flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-700"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-              </svg>
-              Filters
-            </button>
+            <button onClick={() => setIsFilterOpen(!isFilterOpen)} className="md:hidden px-4 py-2 bg-white border border-slate-200 rounded-xl font-bold text-sm">Filters</button>
           </div>
 
-          {filteredProducts.length === 0 ? (
+          {products.length === 0 ? (
             <div className="bg-white rounded-[40px] p-20 text-center border-2 border-dashed border-slate-200">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6 text-slate-400">
-                <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
+              <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-300">
+                <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
               </div>
-              <h3 className="text-xl font-bold text-slate-900 mb-2">No matching systems</h3>
-              <p className="text-slate-500">Try adjusting your filters to find more options.</p>
-              <button 
-                onClick={() => {
-                  setCapacityFilter('all');
-                  setMaxPrice(600000);
-                  setMaxEmi(20000);
-                }}
-                className="mt-6 px-6 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition"
-              >
-                Clear All Filters
-              </button>
+              <h3 className="text-xl font-bold text-slate-900 mb-2">Store catalog is empty</h3>
+              <p className="text-slate-500 mb-8 max-w-sm mx-auto">No products were found in the database. Please initialize the catalog to start selling.</p>
+              
+              {user?.role === 'admin' && (
+                <button 
+                  onClick={handleQuickSeed}
+                  disabled={isSeeding}
+                  className="px-8 py-4 bg-emerald-600 text-white font-bold rounded-2xl shadow-xl shadow-emerald-50 hover:bg-emerald-700 transition flex items-center gap-3 mx-auto disabled:opacity-50"
+                >
+                  {isSeeding ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                  )}
+                  {isSeeding ? 'Initializing Catalog...' : 'Seed Default Catalog Now'}
+                </button>
+              )}
+            </div>
+          ) : filteredProducts.length === 0 ? (
+            <div className="bg-white rounded-[40px] p-20 text-center border-2 border-dashed border-slate-200">
+               <h3 className="text-xl font-bold text-slate-900 mb-2">No matching systems</h3>
+               <p className="text-slate-500">Try adjusting your filters.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
               {filteredProducts.map(product => (
-                <div key={product.id} className="group bg-white rounded-3xl overflow-hidden border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300">
+                <div key={product.id} className="group bg-white rounded-[32px] overflow-hidden border border-slate-100 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col">
                   <div className="relative h-48 overflow-hidden">
-                    <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-110 transition duration-500" />
-                    <div className="absolute top-4 left-4 bg-emerald-600 text-white px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                    <img src={product.image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
+                    <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm">
                       {product.capacity} System
                     </div>
-                    {product.stockStatus === 'out_of_stock' && (
-                      <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center">
-                        <span className="text-white font-bold uppercase tracking-widest text-xs">Out of Stock</span>
-                      </div>
-                    )}
                   </div>
                   
-                  <div className="p-6">
-                    <h3 className="text-lg font-bold text-slate-900 mb-2 line-clamp-1">{product.name}</h3>
+                  <div className="p-6 flex-grow flex flex-col">
+                    <h3 className="text-lg font-bold text-slate-900 mb-1 line-clamp-1">{product.name}</h3>
+                    <div className="flex items-center gap-2 mb-6">
+                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${product.quantity < 5 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                         {product.quantity > 0 ? `${product.quantity} Units Left` : 'Notify when back'}
+                       </span>
+                    </div>
                     
-                    <div className="space-y-3 mb-6">
+                    <div className="space-y-3 mb-6 mt-auto">
                       <div className="flex justify-between items-end">
-                        <span className="text-slate-500 text-xs">Full Price</span>
+                        <span className="text-slate-400 text-[10px] font-bold uppercase tracking-tighter">Total Investment</span>
                         <span className="text-xl font-bold text-slate-900">₹{product.price.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between items-center text-xs py-2 border-y border-slate-50">
-                        <span className="text-emerald-600 font-bold uppercase">Monthly EMI</span>
-                        <span className="text-slate-700 font-semibold">₹{product.emi.toLocaleString()}</span>
+                        <span className="text-emerald-600 font-bold uppercase">EMI ₹{product.emi.toLocaleString()}</span>
+                        <span className="text-slate-400 font-medium italic">Save ₹{product.savings.toLocaleString()}/mo</span>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
-                      <Link to={`/product/${product.id}`} className="px-4 py-3 bg-slate-100 text-slate-900 text-center text-sm font-bold rounded-xl hover:bg-slate-200 transition">
-                        Details
+                      <Link to={`/product/${product.id}`} className="px-4 py-3 bg-slate-100 text-slate-900 text-center text-xs font-bold rounded-xl hover:bg-slate-200 transition">
+                        Specs
                       </Link>
-                      {product.stockStatus === 'in_stock' ? (
-                        <Link to={`/checkout?product=${product.id}`} className="px-4 py-3 bg-emerald-600 text-white text-center text-sm font-bold rounded-xl hover:bg-emerald-700 transition shadow-lg shadow-emerald-50">
-                          Add to Quote
-                        </Link>
-                      ) : (
-                        <button disabled className="px-4 py-3 bg-slate-200 text-slate-400 text-center text-sm font-bold rounded-xl cursor-not-allowed">
-                          Sold Out
-                        </button>
-                      )}
+                      <Link to={`/checkout?product=${product.id}`} className="px-4 py-3 bg-emerald-600 text-white text-center text-xs font-bold rounded-xl hover:bg-emerald-700 transition shadow-lg shadow-emerald-50">
+                        Get Quote
+                      </Link>
                     </div>
                   </div>
                 </div>
