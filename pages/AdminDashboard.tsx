@@ -1,27 +1,29 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, onSnapshot, query, doc, updateDoc, deleteDoc, addDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
-import { db } from '../firebase';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc, addDoc, writeBatch } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-firestore.js';
+import { ref, uploadBytes, getDownloadURL, uploadString } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-storage.js';
+import { GoogleGenAI } from "@google/genai";
+import { db, storage } from '../firebase';
 import { UserProfile, Product, Quote } from '../types';
-import { SOLAR_PRODUCTS } from '../constants';
+import { SOLAR_PRODUCTS, ADMIN_EMAIL } from '../constants';
 
 interface AdminDashboardProps {
   user: UserProfile;
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'users' | 'products' | 'quotes'>('products');
-  const [users, setUsers] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<'products' | 'quotes' | 'users'>('products');
   const [products, setProducts] = useState<Product[]>([]);
-  const [quotes, setQuotes] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState<{connected: boolean, role: string}>({ connected: false, role: 'checking...' });
+  const [status, setStatus] = useState({ connected: false, isAdmin: false });
   
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [formData, setFormData] = useState<Omit<Product, 'id'>>({
+  const initialFormState = {
     name: '',
     capacity: '1kW',
     price: 0,
@@ -31,96 +33,160 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
     description: '',
     features: [],
     quantity: 1,
-    stockStatus: 'in_stock'
-  });
-  const [featureInput, setFeatureInput] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+    stockStatus: 'in_stock' as const
+  };
 
-  // REAL-TIME SYNC
+  const [formData, setFormData] = useState<Omit<Product, 'id'>>(initialFormState);
+  const [featureInput, setFeatureInput] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+
   useEffect(() => {
-    setLoading(true);
-    
+    const isOwner = user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    setStatus(prev => ({ ...prev, isAdmin: isOwner }));
+
     const unsubProducts = onSnapshot(collection(db, 'products'), (snapshot) => {
       const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Product));
       list.sort((a, b) => a.capacity.localeCompare(b.capacity, undefined, { numeric: true }));
       setProducts(list);
       setLoading(false);
-      setStatus(prev => ({ ...prev, connected: true, role: user.role }));
-    }, (error) => {
-      console.error("Products Sync Error:", error);
+      setStatus(prev => ({ ...prev, connected: true }));
+    }, (err) => {
+      console.error("Firestore error:", err);
       setLoading(false);
     });
 
-    const unsubQuotes = onSnapshot(collection(db, 'quotes'), (snapshot) => {
-      setQuotes(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Quote)));
-    });
-
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setUsers(snapshot.docs.map(d => ({ uid: d.id, ...d.data() })));
-    });
-
-    return () => {
-      unsubProducts();
-      unsubQuotes();
-      unsubUsers();
-    };
+    return () => unsubProducts();
   }, [user.uid]);
 
-  const seedCatalog = async () => {
-    if (!confirm("This will restore the default solar systems. Continue?")) return;
-    setIsSubmitting(true);
-    try {
-      const batch = writeBatch(db);
-      SOLAR_PRODUCTS.forEach((p) => {
-        const docRef = doc(db, 'products', p.id);
-        batch.set(docRef, { 
-          ...p, 
-          updatedAt: Date.now(),
-          stockStatus: p.quantity > 0 ? 'in_stock' : 'out_of_stock'
-        });
-      });
-      await batch.commit();
-      alert("Database updated!");
-    } catch (e: any) {
-      alert("Error: " + e.message);
-    } finally {
-      setIsSubmitting(false);
+  const resetForm = (keepOpen = false) => {
+    setFormData({ ...initialFormState });
+    setFeatureInput('');
+    setImageFile(null);
+    setImagePreview(null);
+    setEditingId(null);
+    setAiPrompt('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (!keepOpen) setIsFormOpen(false);
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      setImagePreview(URL.createObjectURL(file));
+      // Clear AI prompt if manual file is chosen
+      setAiPrompt('');
     }
   };
 
-  const resetForm = () => {
-    setFormData({
-      name: '', capacity: '1kW', price: 0, emi: 0, savings: 0,
-      image: '', description: '', features: [], quantity: 1, stockStatus: 'in_stock'
-    });
-    setFeatureInput('');
-    setEditingId(null);
-    setIsFormOpen(false);
+  const generateAIImage = async () => {
+    if (!aiPrompt.trim()) return alert("Please enter a description for the AI.");
+    setIsGeneratingAI(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-image',
+        contents: {
+          parts: [{ text: `A professional, high-quality, 4k photorealistic image of a ${formData.capacity} residential solar rooftop system. Environment: ${aiPrompt}. The image should look clean, modern, and suitable for an e-commerce website.` }]
+        },
+        config: {
+          imageConfig: { aspectRatio: "4:3" }
+        }
+      });
+
+      let base64Data = "";
+      for (const part of response.candidates[0].content.parts) {
+        if (part.inlineData) {
+          base64Data = part.inlineData.data;
+          break;
+        }
+      }
+
+      if (base64Data) {
+        const dataUrl = `data:image/png;base64,${base64Data}`;
+        setImagePreview(dataUrl);
+        setImageFile(null); // Clear manual file if AI generated
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } else {
+        throw new Error("No image was generated by the AI.");
+      }
+    } catch (error: any) {
+      console.error("AI Generation Error:", error);
+      alert("AI Generation failed: " + error.message);
+    } finally {
+      setIsGeneratingAI(false);
+    }
   };
 
   const handleEditClick = (product: Product) => {
     setEditingId(product.id);
     setFormData({
-      name: product.name, capacity: product.capacity, price: product.price,
-      emi: product.emi, savings: product.savings, image: product.image,
-      description: product.description, features: product.features,
-      quantity: product.quantity || 0, stockStatus: product.stockStatus
+      name: product.name,
+      capacity: product.capacity,
+      price: product.price,
+      emi: product.emi,
+      savings: product.savings,
+      image: product.image,
+      description: product.description,
+      features: product.features,
+      quantity: product.quantity || 0,
+      stockStatus: product.stockStatus
     });
-    setFeatureInput(product.features.join(', '));
+    setFeatureInput(product.features ? product.features.join(', ') : '');
+    setImagePreview(product.image);
     setIsFormOpen(true);
     formRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     setIsSubmitting(true);
+    setSaveSuccess(false);
+
     try {
+      let finalImageUrl = formData.image;
+
+      // Handle Manual File Upload
+      if (imageFile) {
+        const storagePath = `products/${Date.now()}_${imageFile.name}`;
+        const storageRef = ref(storage, storagePath);
+        const snapshot = await uploadBytes(storageRef, imageFile);
+        finalImageUrl = await getDownloadURL(snapshot.ref);
+      } 
+      // Handle AI Generated Image (Base64)
+      else if (imagePreview && imagePreview.startsWith('data:image')) {
+        const storagePath = `products/ai_${Date.now()}.png`;
+        const storageRef = ref(storage, storagePath);
+        const base64Data = imagePreview.split(',')[1];
+        await uploadString(storageRef, base64Data, 'base64', { contentType: 'image/png' });
+        finalImageUrl = await getDownloadURL(storageRef);
+      }
+
+      const priceVal = Math.max(0, Number(formData.price) || 0);
+      const qtyVal = Math.max(0, Number(formData.quantity) || 0);
+      
+      const featuresArray = featureInput
+        .split(',')
+        .map(f => f.trim())
+        .filter(f => f !== '');
+
       const finalData = {
-        ...formData,
-        stockStatus: formData.quantity > 0 ? 'in_stock' : 'out_of_stock',
-        features: featureInput.split(',').map(f => f.trim()).filter(f => f !== ''),
-        emi: Math.round(formData.price / 30),
-        savings: Math.round(formData.price * 0.025),
+        name: formData.name.trim() || 'Solar Kit',
+        capacity: formData.capacity,
+        price: priceVal,
+        image: finalImageUrl || 'https://images.unsplash.com/photo-1509391366360-2e959784a276?q=80&w=800',
+        description: formData.description.trim(),
+        quantity: qtyVal,
+        stockStatus: qtyVal > 0 ? 'in_stock' : 'out_of_stock',
+        features: featuresArray,
+        emi: Math.round(priceVal / 30),
+        savings: Math.round(priceVal * 0.025),
         updatedAt: Date.now()
       };
 
@@ -129,9 +195,16 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
       } else {
         await addDoc(collection(db, 'products'), finalData);
       }
-      resetForm();
-    } catch (e: any) {
-      alert("Error: " + e.message);
+
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSaveSuccess(false);
+        resetForm(true); 
+      }, 1500);
+
+    } catch (error: any) {
+      console.error("Save Error:", error);
+      alert("Error: " + error.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -145,17 +218,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
         stockStatus: newQty > 0 ? 'in_stock' : 'out_of_stock' 
       });
     } catch (e: any) {
-      alert("Failed: " + e.message);
-    }
-  };
-
-  const handleDeleteProduct = async (id: string) => {
-    if (confirm("Delete permanently?")) {
-      try {
-        await deleteDoc(doc(db, 'products', id));
-      } catch (e: any) {
-        alert("Delete failed: " + e.message);
-      }
+      alert("Update failed: " + e.message);
     }
   };
 
@@ -163,83 +226,82 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
     <div className="bg-slate-50 min-h-screen py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Admin Header */}
+        {/* Dash Header */}
         <div className="mb-12 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
           <div>
             <div className="flex items-center gap-3">
               <span className="px-4 py-1 bg-emerald-100 text-emerald-700 text-[10px] font-bold rounded-full uppercase tracking-widest border border-emerald-200">
-                Admin Control Panel
+                Admin Console
               </span>
-              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border ${status.connected ? 'border-emerald-200 text-emerald-600 bg-emerald-50' : 'border-amber-200 text-amber-600 bg-amber-50'}`}>
-                {status.connected ? '● Live Connection Active' : '○ Connecting...'}
+              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded-full border ${status.isAdmin ? 'border-emerald-200 text-emerald-600 bg-emerald-50' : 'border-rose-200 text-rose-600 bg-rose-50'}`}>
+                {status.isAdmin ? '● Admin Privileges Active' : '○ Checking Permissions...'}
               </span>
             </div>
-            <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 mt-3 tracking-tight">Solarinfra Management</h1>
-          </div>
-          <div className="flex bg-white rounded-2xl p-1 shadow-sm border border-slate-200">
-            {(['quotes', 'products', 'users'] as const).map(tab => (
-              <button 
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-6 py-2.5 rounded-xl font-bold transition-all duration-300 ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
+            <h1 className="text-4xl lg:text-5xl font-bold text-slate-900 mt-3 tracking-tight">Catalog Studio</h1>
           </div>
         </div>
 
         {activeTab === 'products' && (
           <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Control Bar */}
             <div className="flex flex-col sm:flex-row justify-between items-center bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm gap-4">
                <div className="text-center sm:text-left">
-                 <p className="text-sm font-bold text-slate-900">{products.length} Products Found</p>
-                 <p className="text-xs text-slate-400">Database synchronized automatically</p>
+                 <p className="text-sm font-bold text-slate-900">{products.length} Products Online</p>
+                 <p className="text-xs text-slate-400">Inventory synchronized with cloud storage</p>
                </div>
                <button 
-                 onClick={seedCatalog}
+                 onClick={() => {
+                   if(confirm("Restore defaults?")) {
+                      setIsSubmitting(true);
+                      const batch = writeBatch(db);
+                      SOLAR_PRODUCTS.forEach(p => batch.set(doc(db, 'products', p.id), {...p, updatedAt: Date.now()}));
+                      batch.commit().finally(() => setIsSubmitting(false));
+                   }
+                 }}
                  disabled={isSubmitting}
-                 className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition shadow-lg disabled:opacity-50"
+                 className="px-6 py-3 bg-slate-900 text-white font-bold rounded-2xl hover:bg-slate-800 transition shadow-lg disabled:opacity-50"
                >
-                 {isSubmitting ? (
-                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                 ) : (
-                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                 )}
-                 Restore Default Catalog
+                 Factory Reset Catalog
                </button>
             </div>
 
-            {/* Form Section */}
-            <div ref={formRef} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+            {/* Entry Form */}
+            <div ref={formRef} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden transition-all duration-300">
               <button 
                 onClick={() => setIsFormOpen(!isFormOpen)}
                 className="w-full p-8 flex items-center justify-between hover:bg-slate-50 transition"
               >
                 <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${editingId ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 ${saveSuccess ? 'bg-emerald-500 text-white scale-110' : 'bg-emerald-100 text-emerald-600'}`}>
+                    {saveSuccess ? (
+                      <svg className="w-6 h-6 animate-in zoom-in" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
+                    ) : (
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+                    )}
                   </div>
                   <div className="text-left">
-                    <h2 className="text-xl font-bold text-slate-900">{editingId ? 'Edit Solar Kit' : 'Add New Solar Kit'}</h2>
-                    <p className="text-sm text-slate-500">Update system specifications and inventory quantity</p>
+                    <h2 className="text-xl font-bold text-slate-900">
+                      {saveSuccess ? 'Published to Store!' : editingId ? 'Update System Details' : 'Add New Solar Kit'}
+                    </h2>
+                    <p className="text-sm text-slate-500">
+                      {saveSuccess ? 'Record updated in database. Form reset for next entry.' : 'Ensure technical specs are comma-separated for proper display.'}
+                    </p>
                   </div>
                 </div>
                 <svg className={`w-6 h-6 text-slate-400 transition-transform ${isFormOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" /></svg>
               </button>
 
               {isFormOpen && (
-                <form onSubmit={handleSubmit} className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 gap-8 border-t border-slate-50 mt-4">
+                <form onSubmit={handleSubmit} className="p-8 pt-0 grid grid-cols-1 md:grid-cols-2 gap-8 border-t border-slate-50 mt-4 animate-in slide-in-from-top-4">
                   <div className="space-y-6">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Product Name</label>
-                      <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. Premium 3kW Mono PERC System" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none" />
+                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Model Name</label>
+                      <input required type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="e.g. 1kW Mono-PERC Pro" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none transition" />
                     </div>
-                    
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Capacity</label>
-                        <select value={formData.capacity} onChange={e => setFormData({...formData, capacity: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl">
+                        <select value={formData.capacity} onChange={e => setFormData({...formData, capacity: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none">
                           <option value="1kW">1kW</option>
                           <option value="3kW">3kW</option>
                           <option value="5kW">5kW</option>
@@ -248,36 +310,62 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Price (₹)</label>
-                        <input required type="number" value={formData.price || ''} onChange={e => setFormData({...formData, price: parseInt(e.target.value)})} placeholder="185000" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl" />
+                        <input required type="number" value={formData.price || ''} onChange={e => setFormData({...formData, price: parseInt(e.target.value) || 0})} placeholder="65000" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none" />
                       </div>
                     </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                      <div>
-                        <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Stock Quantity (Units)</label>
-                        <input required type="number" min="0" value={formData.quantity} onChange={e => setFormData({...formData, quantity: parseInt(e.target.value)})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl" placeholder="10" />
-                      </div>
-                    </div>
-
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Features (comma separated)</label>
-                      <input type="text" value={featureInput} onChange={e => setFeatureInput(e.target.value)} placeholder="545Wp Panels, WiFi Monitoring" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl" />
+                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Starting Stock</label>
+                      <input required type="number" min="0" value={formData.quantity} onChange={e => setFormData({...formData, quantity: parseInt(e.target.value) || 0})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Technical Specs (Comma separated)</label>
+                      <input type="text" value={featureInput} onChange={e => setFeatureInput(e.target.value)} placeholder="MPPT, WiFi, 25yr Warranty" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-emerald-500 transition" />
                     </div>
                   </div>
 
                   <div className="space-y-6">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Image URL</label>
-                      <input required type="url" value={formData.image} onChange={e => setFormData({...formData, image: e.target.value})} placeholder="https://..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl" />
+                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">System Visual</label>
+                      <div className="flex gap-4 items-start">
+                        <div className="w-32 h-24 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center text-slate-300 shrink-0">
+                          {imagePreview ? <img src={imagePreview} className="w-full h-full object-cover" alt="Preview" /> : <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                        <div className="flex-1 space-y-3">
+                          <div>
+                             <input ref={fileInputRef} type="file" onChange={handleImageChange} accept="image/*" className="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-[10px] file:font-bold file:bg-emerald-50 file:text-emerald-700 hover:file:bg-emerald-100 transition" />
+                          </div>
+                          <div className="pt-2 border-t border-slate-100">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Or Generate with AI</p>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text" 
+                                value={aiPrompt} 
+                                onChange={e => setAiPrompt(e.target.value)} 
+                                placeholder="Describe house roof..." 
+                                className="flex-1 p-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                              />
+                              <button 
+                                type="button" 
+                                onClick={generateAIImage}
+                                disabled={isGeneratingAI || !aiPrompt.trim()}
+                                className="px-4 py-2 bg-slate-900 text-white text-[10px] font-bold rounded-xl hover:bg-slate-800 disabled:opacity-50 transition flex items-center gap-2"
+                              >
+                                {isGeneratingAI ? <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>}
+                                {isGeneratingAI ? '...' : 'Magic'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Short Description</label>
-                      <textarea required rows={4} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl"></textarea>
+                      <label className="block text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">System Overview</label>
+                      <textarea required rows={3} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="Main benefits..." className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none"></textarea>
                     </div>
                     <div className="flex gap-4">
-                      <button type="button" onClick={resetForm} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition">Cancel</button>
-                      <button type="submit" disabled={isSubmitting} className="flex-[2] py-4 bg-emerald-600 text-white font-bold rounded-2xl shadow-xl shadow-emerald-50 disabled:opacity-50 transition">
-                        {isSubmitting ? 'Saving...' : editingId ? 'Update Kit' : 'Create Kit'}
+                      <button type="button" onClick={() => resetForm(false)} className="flex-1 py-4 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition">Discard</button>
+                      <button type="submit" disabled={isSubmitting || isGeneratingAI} className={`flex-[2] py-4 font-bold rounded-2xl transition-all duration-300 shadow-xl flex items-center justify-center gap-3 ${saveSuccess ? 'bg-emerald-500 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+                        {isSubmitting ? 'Syncing...' : saveSuccess ? 'Ready ✓' : editingId ? 'Save Changes' : 'Publish to Store'}
                       </button>
                     </div>
                   </div>
@@ -285,55 +373,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
               )}
             </div>
 
-            {/* Product Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {loading && products.length === 0 ? (
-                 <div className="col-span-full py-20 text-center text-slate-400 bg-white rounded-[40px] border border-slate-200">
-                    <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-emerald-600 mx-auto mb-4"></div>
-                    <p className="font-bold uppercase tracking-widest text-xs">Syncing with Firestore...</p>
-                 </div>
-              ) : products.length === 0 ? (
-                 <div className="col-span-full py-20 text-center bg-white rounded-[40px] border-2 border-dashed border-slate-100 p-12">
-                   <h3 className="text-lg font-bold text-slate-900 mb-1 italic">No products found.</h3>
-                   <p className="text-slate-400 text-sm mb-6 max-w-sm mx-auto">Fill the form above or click Restore Catalog to begin.</p>
+            {/* Live List */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 pb-24">
+              {products.length === 0 ? (
+                 <div className="col-span-full py-20 text-center bg-white rounded-[40px] border-2 border-dashed border-slate-100 italic text-slate-400">
+                    Database empty. Create a new listing above.
                  </div>
               ) : (
                 products.map(p => (
-                  <div key={p.id} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden flex flex-col h-full hover:shadow-md transition group">
+                  <div key={p.id} className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden flex flex-col group hover:shadow-lg transition-all">
                     <div className="relative h-44 overflow-hidden">
                       <img src={p.image} alt={p.name} className="w-full h-full object-cover group-hover:scale-105 transition duration-700" />
-                      <div className="absolute top-4 left-4 flex gap-2">
-                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase shadow-sm ${
-                          p.quantity > 0 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
-                        }`}>
-                          {p.quantity > 0 ? `${p.quantity} Units` : 'Sold Out'}
+                      <div className="absolute top-4 left-4">
+                         <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase shadow-sm ${p.quantity > 0 ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}`}>
+                          {p.quantity > 0 ? `${p.quantity} Units` : 'Stock Empty'}
                         </span>
                       </div>
                     </div>
-                    <div className="p-6 flex-grow flex flex-col">
-                      <div className="flex justify-between items-start mb-4">
-                        <h3 className="font-bold text-slate-900 text-lg line-clamp-1">{p.name}</h3>
-                        <span className="text-[10px] font-black text-slate-300 uppercase">{p.capacity}</span>
-                      </div>
+                    <div className="p-6">
+                      <h3 className="font-bold text-slate-900 text-lg mb-4 line-clamp-1">{p.name}</h3>
                       
                       <div className="bg-slate-50 p-4 rounded-2xl mb-6 border border-slate-100">
-                        <div className="flex justify-between items-center text-xs font-bold text-slate-400 uppercase mb-2">
-                          <span>Inventory Level</span>
-                          <span className={p.quantity < 5 ? 'text-rose-500' : 'text-emerald-500'}>{p.quantity} Units</span>
+                        <div className="flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase mb-2">
+                          <span>Real-time Inventory</span>
+                          <span className={p.quantity < 3 ? 'text-rose-500' : 'text-emerald-500'}>{p.quantity} Units</span>
                         </div>
                         <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full transition-all duration-1000 ${p.quantity < 5 ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${Math.min(100, (p.quantity / 20) * 100)}%` }}
-                          />
+                          <div className={`h-full bg-emerald-500 transition-all`} style={{ width: `${Math.min(100, (p.quantity / 20) * 100)}%` }} />
                         </div>
                       </div>
 
-                      <div className="mt-auto grid grid-cols-2 gap-2">
-                        <button onClick={() => updateQuantity(p, 1)} className="bg-emerald-50 text-emerald-600 py-2 rounded-xl text-[10px] font-bold border border-emerald-100 hover:bg-emerald-100 transition">Add 1</button>
-                        <button onClick={() => updateQuantity(p, -1)} className="bg-slate-50 text-slate-600 py-2 rounded-xl text-[10px] font-bold border border-slate-100 hover:bg-slate-100 transition">Remove 1</button>
-                        <button onClick={() => handleEditClick(p)} className="col-span-2 bg-slate-900 text-white py-3 rounded-2xl text-xs font-bold hover:bg-slate-800 transition">Edit Details</button>
-                        <button onClick={() => handleDeleteProduct(p.id)} className="col-span-2 py-2 text-rose-500 text-[10px] font-bold uppercase hover:underline">Delete Permanently</button>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button onClick={() => updateQuantity(p, 1)} className="bg-emerald-50 text-emerald-600 py-2 rounded-xl text-[10px] font-bold border border-emerald-100 hover:bg-emerald-100 transition">Stock +1</button>
+                        <button onClick={() => updateQuantity(p, -1)} className="bg-slate-50 text-slate-600 py-2 rounded-xl text-[10px] font-bold border border-slate-100 hover:bg-slate-100 transition">Stock -1</button>
+                        <button onClick={() => handleEditClick(p)} className="col-span-2 bg-slate-900 text-white py-3 rounded-2xl text-xs font-bold hover:bg-slate-800 transition">Edit Specs</button>
+                        <button onClick={() => { if(confirm("Remove this kit permanently?")) deleteDoc(doc(db, 'products', p.id)) }} className="col-span-2 py-2 text-rose-500 text-[10px] font-bold uppercase hover:underline">Delete Kit</button>
                       </div>
                     </div>
                   </div>
@@ -341,19 +415,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
               )}
             </div>
           </div>
-        )}
-
-        {activeTab === 'quotes' && (
-           <div className="bg-white rounded-[40px] p-12 text-center text-slate-400 border border-slate-100">
-             <p className="font-bold">Customer Quotes list will appear here.</p>
-             <p className="text-xs">There are currently {quotes.length} inquiries.</p>
-           </div>
-        )}
-
-        {activeTab === 'users' && (
-           <div className="bg-white rounded-[40px] p-12 text-center text-slate-400 border border-slate-100">
-             <p className="font-bold">Registered Users list ({users.length})</p>
-           </div>
         )}
       </div>
     </div>
