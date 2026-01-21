@@ -33,7 +33,7 @@ export interface Quote {
   userEmail: string;
   productId: string;
   productName: string;
-  status: 'pending' | 'draft' | 'sent' | 'approved' | 'rejected';
+  status: 'pending' | 'draft' | 'sent' | 'approved' | 'rejected' | 'paid';
   basePrice: number;
   finalPrice?: number;
   adminNotes?: string;
@@ -41,4 +41,15 @@ export interface Quote {
   phone: string;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface DesignLead {
+  id: string;
+  userId?: string;
+  userEmail?: string;
+  monthlyBill: number;
+  estimatedSavings: number;
+  carbonOffset: number;
+  status: 'interested' | 'contacted' | 'converted' | 'lost';
+  createdAt: number;
 }

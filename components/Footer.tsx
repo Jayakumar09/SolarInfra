@@ -1,5 +1,6 @@
 
 import React from 'react';
+import { Link } from 'react-router-dom';
 
 const Footer: React.FC = () => {
   return (
@@ -30,8 +31,8 @@ const Footer: React.FC = () => {
             <h4 className="text-white font-bold mb-6">Quick Links</h4>
             <ul className="space-y-4 text-sm">
               <li><a href="#" className="hover:text-emerald-500">How it Works</a></li>
-              <li><a href="#" className="hover:text-emerald-500">Product Kits</a></li>
-              <li><a href="#" className="hover:text-emerald-500">Commercial Solar</a></li>
+              <li><Link to="/products" className="hover:text-emerald-500">Product Kits</Link></li>
+              <li><Link to="/terms" className="hover:text-emerald-500">Terms & Conditions</Link></li>
               <li><a href="#" className="hover:text-emerald-500">Support Center</a></li>
             </ul>
           </div>
@@ -58,8 +59,8 @@ const Footer: React.FC = () => {
         <div className="border-t border-slate-800 mt-20 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs">
           <p>© 2025 SolarInfra.in. All rights reserved.</p>
           <div className="flex gap-6">
-            <a href="#" className="hover:text-white">Privacy Policy</a>
-            <a href="#" className="hover:text-white">Terms of Service</a>
+            <Link to="/terms" className="hover:text-white">Privacy Policy</Link>
+            <Link to="/terms" className="hover:text-white">Terms of Service</Link>
             <a href="#" className="hover:text-white">Refund Policy</a>
           </div>
         </div>

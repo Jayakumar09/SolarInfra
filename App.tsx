@@ -12,6 +12,7 @@ import Dashboard from './pages/Dashboard';
 import AdminDashboard from './pages/AdminDashboard';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import Terms from './pages/Terms';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import { UserProfile } from './types';
@@ -28,8 +29,6 @@ const App: React.FC = () => {
         try {
           const isDefaultAdmin = firebaseUser.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
           
-          // PRE-EMPTIVE STATE: Set optimistic user state so route guards allow access 
-          // while Firestore document is being fetched/repaired
           const optimisticProfile: UserProfile = {
             uid: firebaseUser.uid,
             email: firebaseUser.email || '',
@@ -44,14 +43,12 @@ const App: React.FC = () => {
 
           if (userDoc && userDoc.exists()) {
             const data = userDoc.data() as UserProfile;
-            // Force role sync for admin if database says otherwise
             if (isDefaultAdmin && data.role !== 'admin') {
               await updateDoc(userDocRef, { role: 'admin' });
               data.role = 'admin';
             }
             setUser(data);
           } else {
-            // Auto-create missing user document
             await setDoc(userDocRef, optimisticProfile).catch(e => console.error("Sync error:", e));
             setUser(optimisticProfile);
           }
@@ -101,7 +98,7 @@ const App: React.FC = () => {
             <Route path="/product/:id" element={<ProductDetail />} />
             <Route path="/checkout" element={<Checkout />} />
             <Route path="/dashboard" element={<Dashboard user={user} />} />
-            
+            <Route path="/terms" element={<Terms />} />
             <Route 
               path="/admin" 
               element={
@@ -112,7 +109,6 @@ const App: React.FC = () => {
                 )
               } 
             />
-            
             <Route path="/login" element={<Login user={user} />} />
             <Route path="/signup" element={<Signup />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -31,7 +31,7 @@ const Signup: React.FC = () => {
       newPass += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     setPassword(newPass);
-    setShowPassword(true); // Show the generated password so user can see it
+    setShowPassword(true);
   };
 
   const copyToClipboard = () => {
@@ -45,14 +45,13 @@ const Signup: React.FC = () => {
     e.preventDefault();
     setError('');
     
-    // Email Validation
     if (!validateEmail(email)) {
-      setError('Please enter a valid email address (e.g., name@domain.com)');
+      setError('Please enter a valid email address.');
       return;
     }
 
     if (password.length < 6) {
-      setError('Password must be at least 6 characters long');
+      setError('Password must be at least 6 characters long.');
       return;
     }
 
@@ -78,12 +77,16 @@ const Signup: React.FC = () => {
       navigate('/dashboard');
     } catch (err: any) {
       console.error("Signup error details:", err);
-      let friendlyMessage = err.message;
-      if (err.code === 'auth/configuration-not-found') {
-        friendlyMessage = "Firebase Auth is not fully configured. Ensure 'Email/Password' is enabled in your Firebase Console.";
+      let friendlyMessage = "Failed to create account. Please try again.";
+      
+      if (err.code === 'auth/operation-not-allowed') {
+        friendlyMessage = "Email/Password registration is disabled in Firebase Console.";
       } else if (err.code === 'auth/email-already-in-use') {
         friendlyMessage = "This email is already registered. Please sign in instead.";
+      } else if (err.code === 'auth/weak-password') {
+        friendlyMessage = "The password is too weak.";
       }
+      
       setError(friendlyMessage);
     } finally {
       setLoading(false);
@@ -104,7 +107,7 @@ const Signup: React.FC = () => {
         </div>
 
         {error && (
-          <div className="p-4 bg-red-50 text-red-600 text-sm rounded-2xl border border-red-100 animate-in fade-in slide-in-from-top-2">
+          <div className="p-4 bg-rose-50 text-rose-600 text-sm font-bold rounded-2xl border border-rose-100 animate-in fade-in slide-in-from-top-2">
             {error}
           </div>
         )}
@@ -132,9 +135,6 @@ const Signup: React.FC = () => {
                 className={`w-full p-4 bg-slate-50 border rounded-2xl focus:ring-2 focus:ring-emerald-500 focus:outline-none transition ${email && !validateEmail(email) ? 'border-red-300' : 'border-slate-200'}`} 
                 placeholder="you@example.com"
               />
-              {email && !validateEmail(email) && (
-                <p className="mt-1 text-[10px] text-red-500 font-bold uppercase tracking-wider">Invalid email format</p>
-              )}
             </div>
             <div>
               <div className="flex justify-between items-center mb-2">
