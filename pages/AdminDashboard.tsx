@@ -11,8 +11,16 @@ interface AdminDashboardProps {
   user: UserProfile;
 }
 
+interface ApplianceRow {
+  id: string;
+  name: string;
+  wattage: number;
+  quantity: number;
+  hours: number;
+}
+
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'products' | 'quotes' | 'leads' | 'transactions'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'quotes' | 'leads' | 'transactions' | 'sizing'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [leads, setLeads] = useState<DesignLead[]>([]);
@@ -26,6 +34,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
   
   const formRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sizing Tool State
+  const [appliances, setAppliances] = useState<ApplianceRow[]>([
+    { id: '1', name: 'LED Bulbs', wattage: 12, quantity: 10, hours: 6 },
+    { id: '2', name: 'Ceiling Fan', wattage: 75, quantity: 4, hours: 12 },
+    { id: '3', name: 'Refrigerator', wattage: 250, quantity: 1, hours: 24 },
+  ]);
+  const [monthlyUnits, setMonthlyUnits] = useState<number>(300);
+  const [panelWattage, setPanelWattage] = useState<number>(550);
 
   const initialFormState = {
     name: '',
@@ -119,7 +136,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
     setQuoteUpdating(id);
     try {
       await updateDoc(doc(db, 'quotes', id), { ...updates, updatedAt: Date.now() });
-      // Success will be reflected via real-time listener
     } catch (e: any) {
       alert("Update failed: " + e.message);
     } finally {
@@ -189,6 +205,27 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
     } finally { setIsSubmitting(false); }
   };
 
+  // Sizing Logic
+  const addAppliance = () => {
+    setAppliances([...appliances, { id: Date.now().toString(), name: '', wattage: 0, quantity: 1, hours: 0 }]);
+  };
+
+  const removeAppliance = (id: string) => {
+    setAppliances(appliances.filter(a => a.id !== id));
+  };
+
+  const updateAppliance = (id: string, field: keyof ApplianceRow, value: any) => {
+    setAppliances(appliances.map(a => a.id === id ? { ...a, [field]: value } : a));
+  };
+
+  const calcDailyUnits = appliances.reduce((sum, a) => sum + (a.wattage * a.quantity * a.hours), 0) / 1000;
+  const billDailyUnits = monthlyUnits / 30;
+  const targetDailyUnits = Math.max(calcDailyUnits, billDailyUnits);
+  const requiredPlantKW = Math.ceil((targetDailyUnits / 4) * 1.1 * 10) / 10; // 4 units/kW/day factor + 10% safety
+  const recommendedPlantKW = Math.ceil(requiredPlantKW);
+  const numPanels = Math.ceil((recommendedPlantKW * 1000) / panelWattage);
+  const roofArea = recommendedPlantKW * 100;
+
   // Transactions Logic
   const paidTransactions = quotes.filter(q => q.status === 'paid');
   const totalRevenue = paidTransactions.reduce((acc, q) => acc + (q.finalPrice || q.basePrice), 0);
@@ -208,17 +245,170 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
           </div>
 
           <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto max-w-full">
-            {(['products', 'quotes', 'leads', 'transactions'] as const).map(tab => (
+            {(['products', 'quotes', 'leads', 'transactions', 'sizing'] as const).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest rounded-xl transition whitespace-nowrap ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-900'}`}
               >
-                {tab}
+                {tab === 'sizing' ? 'Sizing Tool' : tab}
               </button>
             ))}
           </div>
         </div>
+
+        {activeTab === 'sizing' && (
+          <div className="animate-in fade-in duration-500 grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-8">
+              {/* Load Calculator */}
+              <div className="bg-white p-8 rounded-[40px] border border-slate-200 shadow-sm">
+                <div className="flex justify-between items-center mb-8">
+                   <h2 className="text-xl font-bold text-slate-900 flex items-center gap-3">
+                     <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                     </div>
+                     House Load Analysis
+                   </h2>
+                   <button onClick={addAppliance} className="text-[10px] font-bold uppercase text-emerald-600 hover:underline">+ Add Appliance</button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-12 gap-4 px-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    <div className="col-span-4">Appliance Name</div>
+                    <div className="col-span-2 text-center">Watts</div>
+                    <div className="col-span-2 text-center">Qty</div>
+                    <div className="col-span-2 text-center">Hrs/Day</div>
+                    <div className="col-span-2"></div>
+                  </div>
+                  
+                  {appliances.map(a => (
+                    <div key={a.id} className="grid grid-cols-12 gap-4 items-center bg-slate-50 p-2 rounded-2xl border border-slate-100">
+                      <input 
+                        className="col-span-4 bg-transparent px-3 py-2 text-sm font-bold text-slate-700 outline-none" 
+                        placeholder="e.g. Fridge" 
+                        value={a.name}
+                        onChange={(e) => updateAppliance(a.id, 'name', e.target.value)}
+                      />
+                      <input 
+                        type="number"
+                        className="col-span-2 bg-white rounded-xl px-2 py-2 text-center text-sm font-bold border border-slate-200 outline-none" 
+                        value={a.wattage || ''}
+                        onChange={(e) => updateAppliance(a.id, 'wattage', parseInt(e.target.value) || 0)}
+                      />
+                      <input 
+                        type="number"
+                        className="col-span-2 bg-white rounded-xl px-2 py-2 text-center text-sm font-bold border border-slate-200 outline-none" 
+                        value={a.quantity || ''}
+                        onChange={(e) => updateAppliance(a.id, 'quantity', parseInt(e.target.value) || 0)}
+                      />
+                      <input 
+                        type="number"
+                        className="col-span-2 bg-white rounded-xl px-2 py-2 text-center text-sm font-bold border border-slate-200 outline-none" 
+                        value={a.hours || ''}
+                        onChange={(e) => updateAppliance(a.id, 'hours', parseInt(e.target.value) || 0)}
+                      />
+                      <div className="col-span-2 text-right">
+                        <button onClick={() => removeAppliance(a.id)} className="p-2 text-rose-400 hover:text-rose-600">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-8 pt-8 border-t border-slate-100 flex justify-between items-center">
+                   <p className="text-sm font-bold text-slate-500">Calculated Consumption:</p>
+                   <p className="text-2xl font-black text-slate-900">{calcDailyUnits.toFixed(2)} <span className="text-sm font-normal text-slate-400">kWh / Day</span></p>
+                </div>
+              </div>
+
+              {/* Bill Verification */}
+              <div className="bg-white p-8 rounded-[40px] border border-slate-200 shadow-sm">
+                 <h2 className="text-xl font-bold text-slate-900 mb-6 flex items-center gap-3">
+                   <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                   </div>
+                   Bill Cross-Check
+                 </h2>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Monthly Units (from Electricity Bill)</label>
+                      <input 
+                        type="number" 
+                        value={monthlyUnits} 
+                        onChange={(e) => setMonthlyUnits(parseInt(e.target.value) || 0)}
+                        className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl text-xl font-bold focus:outline-none"
+                      />
+                    </div>
+                    <div className="p-6 bg-slate-50 rounded-2xl flex flex-col justify-center">
+                       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Historical Daily Average</p>
+                       <p className="text-2xl font-black text-slate-900">{billDailyUnits.toFixed(2)} <span className="text-sm font-normal text-slate-400">kWh / Day</span></p>
+                    </div>
+                 </div>
+              </div>
+            </div>
+
+            {/* Recommendation Sidebar */}
+            <div className="space-y-8">
+              <div className="bg-slate-900 text-white p-10 rounded-[48px] shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full translate-x-12 -translate-y-12" />
+                
+                <h3 className="text-xl font-bold mb-8 flex items-center gap-3">
+                   <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                   </div>
+                   Expert Sizing
+                </h3>
+
+                <div className="space-y-6">
+                  <div className="p-6 bg-white/10 rounded-3xl border border-white/10">
+                    <p className="text-[10px] font-bold text-emerald-400 uppercase mb-2 tracking-widest">Recommended Plant Size</p>
+                    <p className="text-5xl font-black text-white">{recommendedPlantKW} <span className="text-sm font-bold text-emerald-400">kW</span></p>
+                    <p className="text-[9px] text-white/50 mt-4 leading-relaxed">System covers {targetDailyUnits.toFixed(1)} units daily @ 4 units/kW generation factor in India.</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-5 bg-white/5 rounded-2xl border border-white/5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Panels</p>
+                      <p className="text-xl font-bold text-white">{numPanels} <span className="text-[10px] opacity-40">Qty</span></p>
+                      <p className="text-[9px] opacity-40 mt-1">@{panelWattage}W Mono</p>
+                    </div>
+                    <div className="p-5 bg-white/5 rounded-2xl border border-white/5">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Roof Area</p>
+                      <p className="text-xl font-bold text-white">~{roofArea} <span className="text-[10px] opacity-40">sq.ft</span></p>
+                      <p className="text-[9px] opacity-40 mt-1">Approx shadow-free</p>
+                    </div>
+                  </div>
+
+                  <div className="pt-6 border-t border-white/10 space-y-4">
+                    <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-400">Panel Wattage</span>
+                       <select value={panelWattage} onChange={(e) => setPanelWattage(parseInt(e.target.value))} className="bg-slate-800 text-white rounded-lg px-2 py-1 text-xs border border-white/10">
+                          <option value={450}>450W</option>
+                          <option value={535}>535W</option>
+                          <option value={550}>550W</option>
+                          <option value={600}>600W</option>
+                       </select>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                       <span className="text-slate-400">Inverter Type</span>
+                       <span className="font-bold text-emerald-400">{recommendedPlantKW >= 5 ? 'Grid-Tie' : 'Hybrid/On-Grid'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 p-4 bg-emerald-500/20 rounded-2xl border border-emerald-500/20 flex gap-4">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center shrink-0">
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                  </div>
+                  <p className="text-[10px] text-emerald-100 italic leading-relaxed">
+                    Sizing assumes standard Indian conditions (~4 units per kW per day). Batteries recommended only if 100% off-grid backup is needed.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {activeTab === 'products' && (
           <div className="space-y-8 animate-in fade-in duration-500">
