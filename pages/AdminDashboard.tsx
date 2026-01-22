@@ -12,7 +12,7 @@ interface AdminDashboardProps {
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
-  const [activeTab, setActiveTab] = useState<'products' | 'quotes' | 'leads'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'quotes' | 'leads' | 'transactions'>('products');
   const [products, setProducts] = useState<Product[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [leads, setLeads] = useState<DesignLead[]>([]);
@@ -189,6 +189,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
     } finally { setIsSubmitting(false); }
   };
 
+  // Transactions Logic
+  const paidTransactions = quotes.filter(q => q.status === 'paid');
+  const totalRevenue = paidTransactions.reduce((acc, q) => acc + (q.finalPrice || q.basePrice), 0);
+
   return (
     <div className="bg-slate-50 min-h-screen py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -203,12 +207,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
             <h1 className="text-4xl font-bold text-slate-900 mt-3 tracking-tight">Store Management</h1>
           </div>
 
-          <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-slate-100">
-            {(['products', 'quotes', 'leads'] as const).map(tab => (
+          <div className="flex bg-white p-1 rounded-2xl shadow-sm border border-slate-100 overflow-x-auto max-w-full">
+            {(['products', 'quotes', 'leads', 'transactions'] as const).map(tab => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-8 py-3 text-xs font-bold uppercase tracking-widest rounded-xl transition ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-900'}`}
+                className={`px-6 py-3 text-[10px] font-bold uppercase tracking-widest rounded-xl transition whitespace-nowrap ${activeTab === tab ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400 hover:text-slate-900'}`}
               >
                 {tab}
               </button>
@@ -271,7 +275,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
               {products.map(p => (
-                <div key={p.id} className="bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm p-4">
+                <div key={p.id} className="group bg-white rounded-[32px] border border-slate-200 overflow-hidden shadow-sm p-4">
                   <img src={p.image} className="w-full h-32 object-cover rounded-2xl mb-4" />
                   <h3 className="font-bold text-slate-900">{p.name}</h3>
                   <p className="text-xs text-slate-400 mb-4">{p.capacity} System • ₹{p.price.toLocaleString()}</p>
@@ -287,18 +291,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
 
         {activeTab === 'quotes' && (
           <div className="animate-in fade-in duration-500 space-y-6">
-            {quotes.length === 0 ? (
+            {quotes.filter(q => q.status !== 'paid').length === 0 ? (
               <div className="bg-white p-20 rounded-[40px] text-center border-2 border-dashed border-slate-100">
-                <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">No incoming quotes</p>
+                <p className="text-slate-400 font-bold uppercase tracking-widest text-sm">No active management quotes</p>
+                <p className="text-xs text-slate-400 mt-2 italic">Completed orders are moved to the Transactions tab.</p>
               </div>
-            ) : quotes.map(q => (
+            ) : quotes.filter(q => q.status !== 'paid').map(q => (
               <div key={q.id} className={`bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm grid grid-cols-1 lg:grid-cols-4 gap-8 transition-all ${quoteUpdating === q.id ? 'opacity-50' : ''}`}>
                 <div className="lg:col-span-2 space-y-4">
                   <div className="flex items-center gap-3">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                       q.status === 'pending' ? 'bg-amber-100 text-amber-700' : 
                       q.status === 'approved' ? 'bg-emerald-100 text-emerald-600' : 
-                      q.status === 'paid' ? 'bg-blue-100 text-blue-600' :
                       'bg-slate-100 text-slate-500'
                     }`}>
                       {q.status}
@@ -323,14 +327,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                 <div className="flex flex-col gap-2 justify-center">
                   <button 
                     onClick={() => handleUpdateQuote(q.id, { status: 'approved' })} 
-                    disabled={q.status === 'approved' || q.status === 'paid' || quoteUpdating === q.id}
+                    disabled={q.status === 'approved' || quoteUpdating === q.id}
                     className="w-full py-3 bg-emerald-600 text-white rounded-2xl font-bold text-xs hover:bg-emerald-700 shadow-lg shadow-emerald-50 disabled:opacity-50 disabled:bg-emerald-100 disabled:text-emerald-500"
                   >
                     {quoteUpdating === q.id ? 'Syncing...' : q.status === 'approved' ? 'Approved ✓' : 'Approve & Finalize'}
                   </button>
                   <button 
                     onClick={() => handleUpdateQuote(q.id, { status: 'rejected' })} 
-                    disabled={q.status === 'paid' || quoteUpdating === q.id}
+                    disabled={quoteUpdating === q.id}
                     className="w-full py-3 bg-white text-rose-500 border border-rose-100 rounded-2xl font-bold text-xs hover:bg-rose-50 disabled:opacity-50"
                   >
                     Reject
@@ -338,6 +342,77 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {activeTab === 'transactions' && (
+          <div className="animate-in fade-in duration-500 space-y-8">
+            {/* Financial Summary Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50 rounded-full translate-x-12 -translate-y-12 transition-transform group-hover:scale-110" />
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 relative z-10">Total Realized Revenue</p>
+                 <p className="text-4xl font-black text-slate-900 relative z-10">₹{totalRevenue.toLocaleString()}</p>
+                 <p className="text-xs text-emerald-600 font-bold mt-4 relative z-10 flex items-center gap-2">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
+                   From {paidTransactions.length} Completed Orders
+                 </p>
+              </div>
+              <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Conversion Efficiency</p>
+                 <p className="text-4xl font-black text-slate-900">{quotes.length ? Math.round((paidTransactions.length / quotes.length) * 100) : 0}%</p>
+                 <p className="text-xs text-slate-400 font-medium mt-4">Calculated from total incoming quotes</p>
+              </div>
+              <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
+                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Latest Sale</p>
+                 <p className="text-xl font-black text-emerald-600">{paidTransactions[0] ? `₹${(paidTransactions[0].finalPrice || paidTransactions[0].basePrice).toLocaleString()}` : 'No Sales Yet'}</p>
+                 <p className="text-xs text-slate-400 font-medium mt-4">{paidTransactions[0] ? new Date(paidTransactions[0].updatedAt).toLocaleDateString() : 'Awaiting first transaction'}</p>
+              </div>
+            </div>
+
+            {/* Transaction Ledger */}
+            <div className="bg-white rounded-[40px] overflow-hidden border border-slate-200 shadow-sm">
+               <div className="px-8 py-6 border-b border-slate-100 flex justify-between items-center">
+                  <h3 className="text-lg font-bold text-slate-900">Transaction History</h3>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Verified Records</span>
+               </div>
+               <div className="overflow-x-auto">
+                 <table className="w-full text-left">
+                    <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                       <tr>
+                         <th className="px-8 py-6">Order ID</th>
+                         <th className="px-8 py-6">Date Paid</th>
+                         <th className="px-8 py-6">Customer Details</th>
+                         <th className="px-8 py-6">Product & Capacity</th>
+                         <th className="px-8 py-6 text-right">Amount Paid</th>
+                       </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                       {paidTransactions.length === 0 ? (
+                         <tr>
+                           <td colSpan={5} className="px-8 py-20 text-center text-slate-400 font-medium italic">No finalized transactions in record.</td>
+                         </tr>
+                       ) : paidTransactions.map(txn => (
+                         <tr key={txn.id} className="hover:bg-slate-50/50 transition">
+                            <td className="px-8 py-6 font-mono text-[10px] text-slate-500">#{txn.id.slice(-8).toUpperCase()}</td>
+                            <td className="px-8 py-6 text-xs text-slate-900 font-bold">{new Date(txn.updatedAt).toLocaleDateString()}</td>
+                            <td className="px-8 py-6">
+                               <p className="font-bold text-slate-900 text-sm">{txn.userName}</p>
+                               <p className="text-[10px] text-slate-500">{txn.userEmail}</p>
+                            </td>
+                            <td className="px-8 py-6">
+                               <p className="font-bold text-slate-900 text-sm">{txn.productName}</p>
+                               <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-bold rounded-md">PAID</span>
+                            </td>
+                            <td className="px-8 py-6 text-right">
+                               <p className="text-lg font-black text-slate-900">₹{(txn.finalPrice || txn.basePrice).toLocaleString()}</p>
+                            </td>
+                         </tr>
+                       ))}
+                    </tbody>
+                 </table>
+               </div>
+            </div>
           </div>
         )}
 
