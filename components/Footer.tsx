@@ -14,7 +14,7 @@ const Footer: React.FC = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.343l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
                 </svg>
               </div>
-              <span className="text-xl font-bold text-white">SolarInfra.in</span>
+              <span className="text-xl font-bold text-white">SolarInfra.wuaze.com</span>
             </div>
             <p className="max-w-xs mb-8">Empowering homes and businesses across India with clean, renewable energy. The future is bright, the future is solar.</p>
             <div className="flex gap-4">
@@ -57,7 +57,7 @@ const Footer: React.FC = () => {
         </div>
         
         <div className="border-t border-slate-800 mt-20 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs">
-          <p>© 2025 SolarInfra.in. All rights reserved.</p>
+          <p>© 2025 SolarInfra.wuaze.com. All rights reserved.</p>
           <div className="flex gap-6">
             <Link to="/terms" className="hover:text-white">Privacy Policy</Link>
             <Link to="/terms" className="hover:text-white">Terms of Service</Link>

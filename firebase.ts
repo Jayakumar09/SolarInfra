@@ -9,7 +9,7 @@ import { getStorage } from 'https://www.gstatic.com/firebasejs/11.4.0/firebase-s
  */
 const firebaseConfig = {
   apiKey: "AIzaSyDF5EQdcG44-wLVnDmJKa8hG9xtS_IwQGY",
-  authDomain: "solar-infra.firebaseapp.com",
+  authDomain: "solarinfra.wuaze.com",
   projectId: "solar-infra",
   storageBucket: "solar-infra.firebasestorage.app",
   messagingSenderId: "838772887388",

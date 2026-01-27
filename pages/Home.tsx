@@ -39,7 +39,7 @@ const Home: React.FC = () => {
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-                Official SolarInfra Online Store
+                Official SolarInfra.wuaze Store
               </div>
               
               <h1 className="text-5xl lg:text-7xl font-bold text-slate-900 leading-[1.1]">
